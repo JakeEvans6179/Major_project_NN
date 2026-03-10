@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import *
+from tensorflow.keras.layers import Dense, LSTM, Input
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import MeanSquaredError
@@ -110,10 +110,10 @@ Create model
 
 model = Sequential([
 
-    tf.keras.Input(shape=(5,1)),
-    tf.keras.layers.LSTM(64),
-    tf.keras.layers.Dense(8, activation = 'relu'),
-    tf.keras.layers.Dense(1, activation = 'linear')
+    Input(shape=(5,1)),
+    LSTM(64),
+    Dense(8, activation = 'relu'),
+    Dense(1, activation = 'linear')
 
 ])
 

@@ -19,7 +19,7 @@ current_dir = os.getcwd()  # get current directory
 print(f"Current directory: {current_dir}")
 
 extracted_folder_path = tf.keras.utils.get_file(
-    fname='jena_climate_2009_2016.csv.zip',  # Just the filename now!
+    fname='jena_climate_2009_2016.csv.zip',
     origin='https://storage.googleapis.com/tensorflow/tf-keras-datasets/jena_climate_2009_2016.csv.zip',
     cache_dir=current_dir,  # Tell it to use your current folder
     cache_subdir='.',  # Tell it NOT to create a 'datasets' subfolder
@@ -32,7 +32,7 @@ print(f"Dataset successfully saved to: {csv_path}")
 
 df = pd.read_csv(csv_path)
 # Tell Pandas to show all columns
-pd.set_option('display.max_columns', None) #none means all the columns
+pd.set_option('display.max_columns', None) #none means all columns in DF
 
 print(df.head())  # .head() ensures you still only print the top 5 rows
 
