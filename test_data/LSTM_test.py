@@ -59,7 +59,7 @@ Extract relevant data
 
 df=pd.read_csv('Partitioned LCL Data/Small LCL Data/LCL-June2015v2_0.csv')
 
-selected_house = df[df['LCLid'] == 'MAC000022'].copy() #only take houses with MAC000002 ID into new dataframe
+selected_house = df[df['LCLid'] == 'MAC000018'].copy() #only take houses with MAC000002 ID into new dataframe
 
 print(selected_house.head())
 
