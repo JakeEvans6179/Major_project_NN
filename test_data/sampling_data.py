@@ -124,14 +124,42 @@ household_stats["Span_days"] = (
 print("Household comparison stats:")
 print(household_stats) #all house metrics are calculated
 
+
+'''
+New
+'''
+
+#Find houses within a fixed date window allowing for direct comparison
+
+
+print(household_stats["Last_timestep"].value_counts().head(20))
+
+
+common_end = pd.Timestamp("2014-02-28 00:00:00")
+common_start = common_end - pd.Timedelta(days=800)
+
+print("Common start:", common_start)
+print("Common end:  ", common_end)
+
+print("Testing to see how many houses end at or after 2014-02-28 00:00:00")
+valid_houses = household_stats[
+    (household_stats["First_timestep"] <= common_start) & (household_stats["Last_timestep"] >= common_end)].copy()
+
+print("Houses fully covering the fixed window:", len(valid_houses))
+pd.set_option('display.max_columns', None)
+print(valid_houses)
+
+
+
+
 #Find households within the filters (>800 days duration, >0.99 coverage rating)
-good_houses = household_stats[(household_stats['Coverage'] > 0.99) & (household_stats["Span_days"] > 800)]
+#good_houses = household_stats[(household_stats['Coverage'] > 0.99) & (household_stats["Span_days"] > 800)]
 
 
 #print(good_houses)
 
 print("Randomly selecting household id from eligible list")
-rng = np.random.default_rng(69)
+rng = np.random.default_rng(6769)
 
 
 # make sure you have at least 100
@@ -147,5 +175,12 @@ selected_100 = pd.DataFrame({"Household_id": selected_100})
 
 print(selected_100.head())
 print("Selected houses:", len(selected_100))
+
+#checking how many unique end dates there are
+print("Number of unique end dates:", household_stats["Last_timestep"].nunique())
+print("\nMost common end dates:")
+print(household_stats["Last_timestep"].value_counts().head(20))
+
+
 
 
