@@ -81,7 +81,29 @@ all_df['kwh'] = pd.to_numeric(all_df['kwh'], errors='coerce')
 
 #testing = all_df[all_df['LCLid'] == 'MAC000022']
 #print(testing)
+# convert kwh to numerical values
 
+'''
+Remove rows with timestamps not in expected format xx:00:00 xx:30:00
+'''
+print("Removing off-grid timestamps globally")
+
+on_grid_mask = (
+    all_df["DateTime"].dt.minute.isin([0, 30]) &
+    (all_df["DateTime"].dt.second == 0)
+)
+
+off_grid_rows = all_df[~on_grid_mask].copy()
+
+print("Off-grid rows found:", len(off_grid_rows))
+print("Affected houses:", off_grid_rows["LCLid"].nunique())
+print(off_grid_rows.head(20))
+
+# drop all off-grid rows globally
+all_df = all_df[on_grid_mask].copy()
+
+print("Rows after dropping off-grid rows:", len(all_df))
+print("Unique houses after dropping off-grid rows:", all_df["LCLid"].nunique())
 
 
 print("Sorting household data by houseid and DateTime")
@@ -137,49 +159,118 @@ print(household_stats["Last_timestep"].value_counts().head(20))
 
 common_end = pd.Timestamp("2014-02-28 00:00:00")
 common_start = common_end - pd.Timedelta(days=800)
+tolerance = pd.Timedelta(minutes=30)
 
 print("Common start:", common_start)
 print("Common end:  ", common_end)
 
 print("Testing to see how many houses end at or after 2014-02-28 00:00:00")
 valid_houses = household_stats[
-    (household_stats["First_timestep"] <= common_start) & (household_stats["Last_timestep"] >= common_end)].copy()
+    (household_stats["First_timestep"] <= common_start + tolerance) & (household_stats["Last_timestep"] >= common_end - tolerance)].copy()
 
 print("Houses fully covering the fixed window:", len(valid_houses))
 pd.set_option('display.max_columns', None)
 print(valid_houses)
 
 
+eligible_ids = valid_houses["Household_id"].tolist()        #save house ids to list to filter for the eligible houses later
 
+window_df = all_df[
+    (all_df["DateTime"] >= common_start) &      #only include houses from eligible list, starting and stopping from a fixed time
+    (all_df["DateTime"] <= common_end) &
+    (all_df["LCLid"].isin(eligible_ids))
+].copy()
+
+#window_df contains all households that fit length criteria and start and stop at the same time
+
+print(window_df)
 
 #Find households within the filters (>800 days duration, >0.99 coverage rating)
 #good_houses = household_stats[(household_stats['Coverage'] > 0.99) & (household_stats["Span_days"] > 800)]
+expected_count = 800 * 48 + 1
 
-
+print("Eligible houses spanning full window:", len(valid_houses))       #counts rows after removing duplication, filtering and removing off grid value
+print("Expected timestamps per house:", expected_count)         #counts total number of rows per house assuming perfect data
+print("Expected total rows if complete:", expected_count * len(valid_houses))       #total number of rows assuming perfect data across all households
+print("Actual rows in window_df:", len(window_df))
+print("Missing rows vs perfect completeness:", expected_count * len(valid_houses) - len(window_df))
 #print(good_houses)
 
-print("Randomly selecting household id from eligible list")
+
+
+
+print("Calculating coverage inside window_df")
+
+#Recalculate coverage inside window_df
+
+window_stats = (
+    window_df.groupby("LCLid")
+    .agg(
+        Valid_count=("kwh", lambda x: x.notna().sum()),
+        Unique_timestamps=("DateTime", "nunique")
+    )
+    .reset_index()
+    .rename(columns={"LCLid": "Household_id"})
+)
+
+window_stats["Total_count"] = expected_count
+window_stats["Coverage"] = window_stats["Valid_count"] / window_stats["Total_count"]
+window_stats["Timestamp_coverage"] = window_stats["Unique_timestamps"] / window_stats["Total_count"]
+
+print("\nFixed-window household stats:")
+print(window_stats.head())
+print(window_stats["Coverage"].describe())
+
+#final quality filter
+good_houses = window_stats[window_stats["Coverage"] > 0.99].copy()
+
+print("\nGood houses after fixed-window filter:", len(good_houses))
+print(good_houses.head())
+
+# ---------------------------------------------------
+# Randomly sample 100 UNIQUE household IDs
+# ---------------------------------------------------
+print("\nRandomly selecting household IDs from eligible list")
 rng = np.random.default_rng(6769)
 
-
-# make sure you have at least 100
 print("Eligible houses:", len(good_houses))
 
-selected_100 = rng.choice(
+if len(good_houses) < 100:
+    raise ValueError("Too few eligible houses to sample")
+
+selected_ids = rng.choice(
     good_houses["Household_id"].to_numpy(),
     size=100,
     replace=False
 )
 
-selected_100 = pd.DataFrame({"Household_id": selected_100})
+selected_100 = pd.DataFrame({"Household_id": selected_ids})
 
-print(selected_100.head())
+print(selected_100)
 print("Selected houses:", len(selected_100))
 
-#checking how many unique end dates there are
-print("Number of unique end dates:", household_stats["Last_timestep"].nunique())
-print("\nMost common end dates:")
-print(household_stats["Last_timestep"].value_counts().head(20))
+# ---------------------------------------------------
+# Filter raw fixed-window data to those 100 houses
+# ---------------------------------------------------
+selected_houses = window_df[window_df["LCLid"].isin(selected_ids)].copy()
+
+print("\nSelected raw rows:")
+print(selected_houses)
+print("Unique selected houses:", selected_houses["LCLid"].nunique())
+print("Selected raw shape:", selected_houses.shape)
+'''
+# Optional save
+selected_100.to_csv("selected_100_houses_fixed800d.csv", index=False)
+selected_houses.to_parquet("selected_100_households_raw_fixed800d.parquet", index=False)
+good_houses.to_csv("good_houses_fixed800d.csv", index=False)
+window_stats.to_csv("window_stats_fixed800d.csv", index=False)
+
+'''
+#save to parquet for training script to use
+selected_houses.to_parquet("selected_100_households_raw_fixed800d.parquet", index=False)
+
+
+
 
 
 

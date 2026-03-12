@@ -9,9 +9,7 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.optimizers import Adam
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
-'''
-LSTM_training for individual household (last working script)
-'''
+
 data_path = Path("selected_100_households_hourly_scaled_with_splits.parquet")
 
 max_min_path = Path("global_kwh_scaler.csv")
@@ -176,4 +174,3 @@ metrics = evaluate_predictions(
 )
 
 print(metrics)
-

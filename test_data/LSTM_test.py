@@ -185,7 +185,6 @@ model.fit(
     x_train, y_train,
     validation_data=(x_val, y_val),
     epochs=100,
-
     callbacks=[cp, es] #only saves model (checkpoint) if it performs the best so far, and stops training if MSE doesn't decrease after 5 rounds
 )
 

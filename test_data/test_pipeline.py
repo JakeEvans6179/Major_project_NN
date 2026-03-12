@@ -1,271 +1,147 @@
 from pathlib import Path
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-# ============================================================
+"""
+Preprocess the 100 selected households:
+
+- load fixed-window raw rows
+- reindex each house to the expected 30-minute timeline
+- forward fill missing kwh
+- backfill only if the first value is missing
+- shift timestamps back 30 mins
+- aggregate to hourly kwh
+- add time features
+- combine all houses into one dataframe
+- save to parquet
+"""
+
+# --------------------------------------------------
 # CONFIG
-# ============================================================
-PARQUET_FILE = Path("saved_householddata.parquet")
-DATA_FOLDER = Path(r"Partitioned LCL Data")
+# --------------------------------------------------
+raw_parquet = Path("selected_100_households_raw_fixed800d.parquet")
+out_parquet = Path("selected_100_households_hourly_processed.parquet")
 
-COMMON_END = pd.Timestamp("2014-02-28 00:00:00")
-WINDOW_DAYS = 800
-COMMON_START = COMMON_END - pd.Timedelta(days=WINDOW_DAYS)
+common_end = pd.Timestamp("2014-02-28 00:00:00")
+common_start = common_end - pd.Timedelta(days=800)
 
-COVERAGE_THRESHOLD = 0.99
-RANDOM_SEED = 69
-N_HOUSES = 100
+print("common start:", common_start)
 
-SELECTED_IDS_CSV = Path("selected_100_houses_fixed800d.csv")
-GOOD_HOUSES_CSV = Path("good_houses_fixed800d.csv")
-HOUSEHOLD_STATS_CSV = Path("household_stats_all_std.csv")
-WINDOW_STATS_CSV = Path("window_stats_fixed800d.csv")
-SELECTED_RAW_PARQUET = Path("selected_100_households_raw_fixed800d.parquet")
-
-print("Common start:", COMMON_START)
-print("Common end:  ", COMMON_END)
-
-# ============================================================
-# STEP 1: LOAD CLEANED DATA OR BUILD IT
-# ============================================================
-if PARQUET_FILE.exists():
-    print(f"\nFound {PARQUET_FILE.name}. Loading data directly...")
-    all_df = pd.read_parquet(PARQUET_FILE)
-
-else:
-    print(f"\n{PARQUET_FILE.name} not found. Processing raw CSVs...")
-
-    csv_files = sorted(DATA_FOLDER.rglob("*.csv"))
-    print(f"Found {len(csv_files)} CSV files")
-
-    dfs = []
-
-    for i, f in enumerate(csv_files, start=1):
-        print(f"Loading {i}/{len(csv_files)}: {f.name}")
-
-        temp = pd.read_csv(
-            f,
-            usecols=["LCLid", "stdorToU", "DateTime", "KWH/hh (per half hour) "],
-            low_memory=False
-        )
-
-        temp = temp.rename(columns={"KWH/hh (per half hour) ": "kwh"})
-
-        # convert types
-        temp["DateTime"] = pd.to_datetime(temp["DateTime"], errors="coerce")
-        temp["kwh"] = pd.to_numeric(temp["kwh"], errors="coerce")
-
-        # keep only standard tariff houses
-        temp = temp[temp["stdorToU"] == "Std"].copy()
-
-        dfs.append(temp)
-
-    all_df = pd.concat(dfs, ignore_index=True)
-
-    # remove exact duplicates
-    all_df = all_df.drop_duplicates(subset=["LCLid", "stdorToU", "DateTime", "kwh"])
-
-    # stdorToU no longer needed after filtering
-    all_df = all_df.drop(columns=["stdorToU"])
-
-    all_df.to_parquet(PARQUET_FILE, index=False)
-    print(f"Finished processing and saved to {PARQUET_FILE.name}")
-
-# defensive type conversion in case parquet was loaded
-all_df["DateTime"] = pd.to_datetime(all_df["DateTime"], errors="coerce")
-all_df["kwh"] = pd.to_numeric(all_df["kwh"], errors="coerce")
-
-# remove rows with missing household id or timestamp
-all_df = all_df.dropna(subset=["LCLid", "DateTime"]).copy()
-
-print("\n--- Raw/Cleaned Data Summary ---")
-print(all_df.head())
-print("Shape:", all_df.shape)
-print("Unique houses:", all_df["LCLid"].nunique())
-
-# ============================================================
-# STEP 2: SORT
-# ============================================================
-print("\nSorting by LCLid and DateTime...")
-all_df = all_df.sort_values(["LCLid", "DateTime"]).reset_index(drop=True)
-
-# ============================================================
-# STEP 3: BUILD FULL-HOUSE STATS (OVER ENTIRE AVAILABLE HISTORY)
-# ============================================================
-print("\nCalculating household stats over full available history...")
-
-household_stats = (
-    all_df.groupby("LCLid")
-    .agg(
-        First_timestep=("DateTime", "min"),
-        Last_timestep=("DateTime", "max"),
-        Valid_count=("kwh", lambda x: x.notna().sum())
-    )
-    .reset_index()
-    .rename(columns={"LCLid": "Household_id"})
+# exact half-hour schedule expected for every house
+expected_index_30m = pd.date_range(
+    start=common_start + pd.Timedelta(minutes=30),      #start at the first half hour after starting, removes the first half hour reading
+    end=common_end,
+    freq="30min"
 )
 
-household_stats["Total_count"] = (
-    ((household_stats["Last_timestep"] - household_stats["First_timestep"]).dt.total_seconds() / (30 * 60))
-    .round()
-    .astype(int)
-    + 1
-)
+print("Expected 30-min points per house:", len(expected_index_30m))
 
-household_stats["Coverage"] = household_stats["Valid_count"] / household_stats["Total_count"]
+# --------------------------------------------------
+# LOAD
+# --------------------------------------------------
+df = pd.read_parquet(raw_parquet)
 
-household_stats["Span_days"] = (
-    (household_stats["Last_timestep"] - household_stats["First_timestep"]).dt.total_seconds()
-    / (24 * 60 * 60)
-)
+df["DateTime"] = pd.to_datetime(df["DateTime"], errors="coerce")
+df["kwh"] = pd.to_numeric(df["kwh"], errors="coerce")
 
-print(household_stats.head())
-print("Total houses in full stats:", len(household_stats))
+df = df.sort_values(["LCLid", "DateTime"]).reset_index(drop=True)
 
-# save full stats
-household_stats.to_csv(HOUSEHOLD_STATS_CSV, index=False)
+print(df.head())
+print("Unique houses:", df["LCLid"].nunique())
+print("Raw shape:", df.shape)
 
-# ============================================================
-# STEP 4: CHECK COMMON END DATES
-# ============================================================
-print("\nMost common full-history end dates:")
-print(household_stats["Last_timestep"].value_counts().head(20))
+# --------------------------------------------------
+# HOUSE PREPROCESS FUNCTION
+# --------------------------------------------------
+def preprocess_one_house(house_df, house_id):
+    house = house_df.copy()
 
-# ============================================================
-# STEP 5: REQUIRE HOUSES TO FULLY COVER THE FIXED COMMON WINDOW
-# ============================================================
-print("\nFiltering houses that fully cover the fixed common window...")
+    # set index to time
+    house = house.set_index("DateTime").sort_index()    #set index to DateTime
 
-fixed_window_houses = household_stats[
-    (household_stats["First_timestep"] <= COMMON_START) &
-    (household_stats["Last_timestep"] >= COMMON_END)
-].copy()
+    #keep only kwh column during reindex
+    house = house[["kwh"]]
 
-print("Houses fully covering window:", len(fixed_window_houses))
+    #add missing timestamps as NaN rows
+    house = house.reindex(expected_index_30m)
 
-eligible_ids = fixed_window_houses["Household_id"].tolist()
+    #fill missing consumption values
+    #ffill handles normal internal gaps
+    #bfill only fixes a missing first boundary value if needed
+    house["kwh"] = house["kwh"].ffill().bfill()
 
-# keep only rows inside the fixed window, and only from houses that fully cover it
-window_df = all_df[
-    (all_df["LCLid"].isin(eligible_ids)) &
-    (all_df["DateTime"] >= COMMON_START) &
-    (all_df["DateTime"] <= COMMON_END)
-].copy()
+    #restore household ID
+    house["LCLid"] = house_id
 
-print("Window dataframe shape:", window_df.shape)
-print("Unique houses in fixed window:", window_df["LCLid"].nunique())
+    #shift timestamps back 30 minutes so hourly aggregation sums correctly
 
-# ============================================================
-# STEP 6: REMOVE HOUSES WITH OFF-GRID TIMESTAMPS IN THE WINDOW
-# We expect timestamps exactly on :00 or :30 with second==0
-# ============================================================
-print("\nChecking for off-grid timestamps inside the fixed window...")
+    house.index = house.index - pd.Timedelta(minutes=30)
 
-off_grid_mask = ~(
-    window_df["DateTime"].dt.minute.isin([0, 30]) &
-    (window_df["DateTime"].dt.second == 0)
-)
-
-bad_time_rows = window_df[off_grid_mask].copy()
-bad_time_houses = bad_time_rows["LCLid"].unique().tolist()
-
-print("Rows with off-grid timestamps:", len(bad_time_rows))
-print("Houses with off-grid timestamps:", len(bad_time_houses))
-
-if len(bad_time_houses) > 0:
-    print("Example bad rows:")
-    print(bad_time_rows.head(20))
-
-window_df = window_df[~window_df["LCLid"].isin(bad_time_houses)].copy()
-
-print("Window dataframe shape after removing off-grid houses:", window_df.shape)
-print("Unique houses after removing off-grid houses:", window_df["LCLid"].nunique())
-
-# ============================================================
-# STEP 7: COMPUTE COVERAGE INSIDE THE SAME FIXED WINDOW
-# ============================================================
-print("\nComputing fixed-window coverage stats...")
-
-expected_index = pd.date_range(start=COMMON_START, end=COMMON_END, freq="30min")
-expected_count = len(expected_index)
-
-print("Expected half-hour readings per house in fixed window:", expected_count)
-
-window_stats = (
-    window_df.groupby("LCLid")
-    .agg(
-        Valid_count=("kwh", lambda x: x.notna().sum()),
-        Unique_timestamps=("DateTime", "nunique")
-    )
-    .reset_index()
-    .rename(columns={"LCLid": "Household_id"})
-)
-
-window_stats["Total_count"] = expected_count
-window_stats["Coverage"] = window_stats["Valid_count"] / window_stats["Total_count"]
-window_stats["Timestamp_coverage"] = window_stats["Unique_timestamps"] / window_stats["Total_count"]
-
-print(window_stats.head())
-print(window_stats["Coverage"].describe())
-
-# save fixed-window stats
-window_stats.to_csv(WINDOW_STATS_CSV, index=False)
-
-# ============================================================
-# STEP 8: QUALITY FILTER
-# ============================================================
-print(f"\nApplying quality filter: Coverage > {COVERAGE_THRESHOLD}")
-
-good_houses = window_stats[window_stats["Coverage"] > COVERAGE_THRESHOLD].copy()
-
-print("Good houses after fixed-window filter:", len(good_houses))
-print(good_houses.head())
-
-good_houses.to_csv(GOOD_HOUSES_CSV, index=False)
-
-if len(good_houses) < N_HOUSES:
-    raise ValueError(
-        f"Only {len(good_houses)} houses passed the filter, cannot sample {N_HOUSES}."
+    #aggregate to hourly kwh
+    hourly = (
+        house[["kwh"]]
+        .resample("h")
+        .sum()
     )
 
-# ============================================================
-# STEP 9: RANDOMLY SAMPLE 100 HOUSES WITH FIXED SEED
-# ============================================================
-print(f"\nRandomly sampling {N_HOUSES} houses with seed {RANDOM_SEED}...")
+    #put house id back in
+    hourly["LCLid"] = house_id
 
-rng = np.random.default_rng(RANDOM_SEED)
+    #add cyclical/calendar features
+    seconds = hourly.index.map(pd.Timestamp.timestamp)
 
-selected_100 = rng.choice(
-    good_houses["Household_id"].to_numpy(),
-    size=N_HOUSES,
-    replace=False
-)
+    day_duration = 24 * 60 * 60
+    year_duration = 365.2425 * day_duration
 
-selected_100 = pd.DataFrame({"Household_id": selected_100})
+    hourly["hour_sin"] = np.sin(2 * np.pi * seconds / day_duration)
+    hourly["hour_cos"] = np.cos(2 * np.pi * seconds / day_duration)
 
-print(selected_100.head())
-print("Selected houses:", len(selected_100))
+    hourly["year_sin"] = np.sin(2 * np.pi * seconds / year_duration)
+    hourly["year_cos"] = np.cos(2 * np.pi * seconds / year_duration)
 
-selected_100.to_csv(SELECTED_IDS_CSV, index=False)
+    dow = hourly.index.dayofweek
+    hourly["dow_sin"] = np.sin(2 * np.pi * dow / 7)
+    hourly["dow_cos"] = np.cos(2 * np.pi * dow / 7)
 
-# ============================================================
-# STEP 10: SAVE RAW DATA FOR JUST THE SELECTED 100 HOUSES
-# ============================================================
-selected_ids = selected_100["Household_id"].tolist()
+    hourly["weekend"] = (hourly.index.dayofweek >= 5).astype(int)
 
-selected_df = window_df[window_df["LCLid"].isin(selected_ids)].copy()
+    #return datetime to a column
+    hourly = hourly.reset_index().rename(columns={"index": "DateTime"})
 
-print("\nSelected raw dataframe summary:")
-print(selected_df.head())
-print("Shape:", selected_df.shape)
-print("Unique selected houses:", selected_df["LCLid"].nunique())
+    return hourly
 
-selected_df.to_parquet(SELECTED_RAW_PARQUET, index=False)
 
-print("\nSaved files:")
-print(" -", PARQUET_FILE)
-print(" -", HOUSEHOLD_STATS_CSV)
-print(" -", WINDOW_STATS_CSV)
-print(" -", GOOD_HOUSES_CSV)
-print(" -", SELECTED_IDS_CSV)
-print(" -", SELECTED_RAW_PARQUET)
+# --------------------------------------------------
+# RUN FOR ALL HOUSES
+# --------------------------------------------------
+processed = []
+
+house_ids = sorted(df["LCLid"].unique())
+
+for i, house_id in enumerate(house_ids, start=1):       #start process for all 100 houses
+    print(f"Processing {i}/{len(house_ids)}: {house_id}")
+
+    house_df = df[df["LCLid"] == house_id].copy()
+    hourly_house = preprocess_one_house(house_df, house_id)
+    processed.append(hourly_house)
+
+hourly_df = pd.concat(processed, ignore_index=True)     #put all the processed dataframes into one big dataframe
+#pd.set_option("display.max_columns", None)
+#pd.set_option("display.max_rows", None)
+print("\nProcessed hourly dataframe:")
+print(hourly_df)
+print("Unique houses:", hourly_df["LCLid"].nunique())
+print("Hourly shape:", hourly_df.shape)
+
+#check remaining NaNs
+print("\nRemaining NaNs by column:")
+print(hourly_df.isna().sum())
+
+#save
+hourly_df.to_parquet(out_parquet, index=False)
+print(f"\nSaved processed hourly data to: {out_parquet}")
+
+
+'''
+Now apply min max scaling and organise data into training, validation and test splits and perform training
+'''
