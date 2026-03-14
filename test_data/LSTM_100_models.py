@@ -9,6 +9,14 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.optimizers import Adam
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
+import random
+
+print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+
+tf.random.set_seed(69)
+np.random.seed(69)       # Ensures NumPy windowing/math is consistent
+random.seed(69)          # Ensures Python's internal loops are consistent
+
 
 data_path = Path("selected_100_households_hourly_scaled_with_splits.parquet")
 
@@ -158,7 +166,7 @@ def train_one_lstm(X_train, y_train, X_val, y_val):
 
     es = EarlyStopping(
         monitor="val_loss",
-        patience=10,
+        patience=20,
         restore_best_weights=True
     )
 
@@ -166,7 +174,7 @@ def train_one_lstm(X_train, y_train, X_val, y_val):
         X_train, y_train,
         validation_data=(X_val, y_val),
         epochs=100,
-        batch_size=64,
+        batch_size=256,
         verbose=0,
         callbacks=[es]
     )
