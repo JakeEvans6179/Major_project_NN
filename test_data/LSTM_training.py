@@ -9,6 +9,10 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.optimizers import Adam
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
+print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+
+tf.random.set_seed(69)
+
 
 data_path = Path("selected_100_households_hourly_scaled_with_splits.parquet")
 
@@ -61,7 +65,7 @@ def get_house_split(df: pd.DataFrame, house_id: str):
 
     return train_df, val_df, test_df
 
-house_id = df["LCLid"].iloc[0]
+house_id = df["LCLid"].iloc[1]
 train_df, val_df, test_df = get_house_split(df, house_id)
 
 print("House:", house_id)
@@ -160,6 +164,7 @@ history = model.fit(
     X_train, y_train,
     validation_data=(X_val, y_val),
     epochs=100,
+    batch_size=128,
     verbose=1,
     callbacks=[early_stop]
 )
