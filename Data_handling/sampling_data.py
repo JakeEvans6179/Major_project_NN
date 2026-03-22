@@ -12,7 +12,7 @@ Enabling us to select list of 100 suitable households for running testing on
 '''
 # Define the path for your saved Parquet file
 parquet_file = Path("saved_householddata.parquet")
-WINDOW_DURATION = 424
+WINDOW_DURATION = 423
 # IF STATEMENT: Check if the file already exists
 if parquet_file.exists():
     print(f"Found {parquet_file.name} Loading data directly")
@@ -270,7 +270,7 @@ window_stats.to_csv("window_stats_fixed800d.csv", index=False)
 
 '''
 #save to parquet for training script to use
-selected_houses.to_parquet("selected_100_households_raw_fixed800d.parquet", index=False)
+selected_houses.to_parquet("selected_100_households_raw.parquet", index=False)
 
 
 

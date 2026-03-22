@@ -14,16 +14,22 @@ Preprocess the 100 selected households:
 - add time features
 - combine all houses into one dataframe
 - save to parquet
+
+**updated
+Load in the processed weather data and merge into dataset in this script
+Normalise in next script
 """
 
 # --------------------------------------------------
 # CONFIG
 # --------------------------------------------------
-raw_parquet = Path("selected_100_households_raw_fixed800d.parquet")
-out_parquet = Path("selected_100_households_hourly_processed.parquet")
+raw_parquet = Path("selected_100_households_raw.parquet")
+out_parquet = Path("selected_100.parquet")
+
+WINDOW_DURATION = 423
 
 common_end = pd.Timestamp("2014-02-28 00:00:00")
-common_start = common_end - pd.Timedelta(days=800)
+common_start = common_end - pd.Timedelta(days=WINDOW_DURATION)
 
 print("common start:", common_start)
 
@@ -136,6 +142,35 @@ print("Hourly shape:", hourly_df.shape)
 #check remaining NaNs
 print("\nRemaining NaNs by column:")
 print(hourly_df.isna().sum())
+
+
+
+'''
+Merge dataset with weather data, one copy for each houseid
+'''
+
+weather_parquet = Path("weather_data.parquet")
+weather_df = pd.read_parquet(weather_parquet)
+
+weather_df["DateTime"] = pd.to_datetime(weather_df["DateTime"], errors="coerce")
+
+print("\nWeather dataframe:")
+print(weather_df.head())
+print("Weather shape:", weather_df.shape)
+print("Weather duplicate timestamps:", weather_df.duplicated(subset=["DateTime"]).sum())
+
+hourly_df = hourly_df.merge(
+    weather_df,
+    on="DateTime",
+    how="left"
+)
+
+print("\nAfter weather merge:")
+print(hourly_df.head())
+print("Merged shape:", hourly_df.shape)
+print("Duplicate LCLid-DateTime rows:", hourly_df.duplicated(subset=["LCLid", "DateTime"]).sum())
+print("Missing temperature after merge:", hourly_df["temperature"].isna().sum())
+print("Missing humidity after merge:", hourly_df["humidity"].isna().sum())
 
 #save
 hourly_df.to_parquet(out_parquet, index=False)

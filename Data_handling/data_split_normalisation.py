@@ -12,7 +12,7 @@ Apply min max scaling from training set on all sets
 Run training and evaluate average performance across all household data
 '''
 
-hourly_path = Path("selected_100_households_hourly_processed.parquet")
+hourly_path = Path("selected_100.parquet")
 
 df = pd.read_parquet(hourly_path)
 
@@ -22,7 +22,7 @@ train_ratio = 0.7
 val_ratio = 0.2
 test_ratio = 0.1
 
-assert round(train_ratio + val_ratio + test_ratio) == 1.0
+assert round(train_ratio + val_ratio + test_ratio) == 1.0   #make sure it adds up to 100%
 
 
 df["DateTime"] = pd.to_datetime(df["DateTime"], errors="coerce") #set to DateTime object
@@ -39,6 +39,8 @@ print("Shape:", df.shape)
 #split data into train val test sets
 house_splits = {}   #used to store each houses training, validation and test set
 all_train_kwh = []  #used to collect all kwh data from training sets to find global max and global min
+all_train_temp = []
+all_train_hum = []
 
 house_ids = sorted(df["LCLid"].unique())        #sort house ids in ascending order
 
@@ -60,41 +62,84 @@ for house_id in house_ids:
     }
 
     all_train_kwh.append(train_df["kwh"])
+    all_train_temp.append(train_df["temperature"])
+    all_train_hum.append(train_df["humidity"])
 
 
 #combine all training kwh values across all houses --> used to calculate global min max values for scaling (on training set)
 all_train_kwh = pd.concat(all_train_kwh, ignore_index=True)
+all_train_temp = pd.concat(all_train_temp, ignore_index=True)
+all_train_hum = pd.concat(all_train_hum, ignore_index=True)
 
 print(all_train_kwh)
+print(all_train_temp)
+print(all_train_hum)
 
+#get min and max values from training set
 global_kwh_min = all_train_kwh.min()
 global_kwh_max = all_train_kwh.max()
+
+global_temp_min = all_train_temp.min()
+global_temp_max = all_train_temp.max()
+
+global_hum_min = all_train_hum.min()
+global_hum_max = all_train_hum.max()
 
 print("\nGlobal training kwh min:", global_kwh_min)
 print("Global training kwh max:", global_kwh_max)
 
+print("\nGlobal training temperature min:", global_temp_min)
+print("Global training temperature max:", global_temp_max)
+
+print("\nGlobal training humidity min:", global_hum_min)
+print("Global training humidity max:", global_hum_max)
+
 if global_kwh_max == global_kwh_min:
     raise ValueError("Global kwh min and max are equal; cannot apply min-max scaling.")
 
+if global_temp_max == global_temp_min:
+    raise ValueError("Global temperature min and max are equal; cannot apply min-max scaling.")
+
+if global_hum_max == global_hum_min:
+    raise ValueError("Global humidity min and max are equal; cannot apply min-max scaling.")
 # --------------------------------------------------
 # MIN-MAX SCALE KWH ONLY
 # --------------------------------------------------
-def minmax_scale_kwh(series, min_val, max_val):
+def minmax_scale(series, min_val, max_val):
     return (series - min_val) / (max_val - min_val)
 
 
 #apply min max scaling for all sets (train, val, test)
 for house_id in house_ids:
-    house_splits[house_id]["train"]["kwh"] = minmax_scale_kwh(
-        house_splits[house_id]["train"]["kwh"], global_kwh_min, global_kwh_max
-    )
-    house_splits[house_id]["val"]["kwh"] = minmax_scale_kwh(
-        house_splits[house_id]["val"]["kwh"], global_kwh_min, global_kwh_max
-    )
-    house_splits[house_id]["test"]["kwh"] = minmax_scale_kwh(
-        house_splits[house_id]["test"]["kwh"], global_kwh_min, global_kwh_max
-    )
+    #energy usage data
+    house_splits[house_id]["train"]["kwh"] = minmax_scale(
+        house_splits[house_id]["train"]["kwh"], global_kwh_min, global_kwh_max)
 
+    house_splits[house_id]["val"]["kwh"] = minmax_scale(
+        house_splits[house_id]["val"]["kwh"], global_kwh_min, global_kwh_max)
+
+    house_splits[house_id]["test"]["kwh"] = minmax_scale(
+        house_splits[house_id]["test"]["kwh"], global_kwh_min, global_kwh_max)
+
+    #temperature data
+    house_splits[house_id]["train"]["temperature"] = minmax_scale(
+        house_splits[house_id]["train"]["temperature"], global_temp_min, global_temp_max)
+
+    house_splits[house_id]["val"]["temperature"] = minmax_scale(
+        house_splits[house_id]["val"]["temperature"], global_temp_min, global_temp_max)
+
+    house_splits[house_id]["test"]["temperature"] = minmax_scale(
+        house_splits[house_id]["test"]["temperature"], global_temp_min, global_temp_max)
+
+    #humidity data
+    house_splits[house_id]["train"]["humidity"] = minmax_scale(
+        house_splits[house_id]["train"]["humidity"], global_hum_min, global_hum_max)
+
+    house_splits[house_id]["val"]["humidity"] = minmax_scale(
+        house_splits[house_id]["val"]["humidity"], global_hum_min, global_hum_max)
+
+    house_splits[house_id]["test"]["humidity"] = minmax_scale(
+        house_splits[house_id]["test"]["humidity"], global_hum_min, global_hum_max)
 
 
 train_list = []
@@ -125,6 +170,12 @@ print(train_all)
 #sanity check, min = 0, max = 1
 print("\nScaled train kwh range:")
 print(train_all["kwh"].min(), train_all["kwh"].max())
+
+print("\nScaled train temperature range:")
+print(train_all["temperature"].min(), train_all["temperature"].max())
+
+print("\nScaled train humidity range:")
+print(train_all["humidity"].min(), train_all["humidity"].max())
 
 # ------
 
@@ -161,12 +212,16 @@ print(splits_df)
 print(splits_df.shape)
 print(splits_df["split"].value_counts())
 
-splits_df.to_parquet("selected_100_households_hourly_scaled_with_splits.parquet", index=False)
+splits_df.to_parquet("selected_100_normalised.parquet", index=False)
 
 pd.DataFrame({
     "global_kwh_min": [global_kwh_min],
-    "global_kwh_max": [global_kwh_max]
-}).to_csv("global_kwh_scaler.csv", index=False)
+    "global_kwh_max": [global_kwh_max],
+    "global_temp_min": [global_temp_min],
+    "global_temp_max": [global_temp_max],
+    "global_hum_min": [global_hum_min],
+    "global_hum_max": [global_hum_max],
+}).to_csv("global_scaler.csv", index=False)
 
 
 

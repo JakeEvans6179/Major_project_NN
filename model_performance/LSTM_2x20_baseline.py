@@ -27,7 +27,7 @@ random.seed(69)          # Ensures Python's internal loops are consistent
 
 data_path = Path("selected_100_households_hourly_scaled_with_splits.parquet")
 
-max_min_path = Path("global_kwh_scaler.csv")
+max_min_path = Path("global_scaler.csv")
 
 def load_data():
     df = pd.read_parquet(data_path)
